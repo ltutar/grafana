@@ -1,4 +1,4 @@
-import { nanoid } from '@reduxjs/toolkit';
+import { customAlphabet } from 'nanoid';
 import { Unsubscribable } from 'rxjs';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -33,6 +33,8 @@ import { getNextRefIdChar } from './query';
 export const DEFAULT_UI_STATE = {
   dedupStrategy: LogsDedupStrategy.none,
 };
+
+const nanoid = customAlphabet('01234567890abcdefghijklmnopqrstuwxyz', 3);
 
 const MAX_HISTORY_ITEMS = 100;
 
@@ -101,18 +103,9 @@ export function buildQueryTransaction(
   timeZone?: TimeZone,
   scopedVars?: ScopedVars
 ): QueryTransaction {
-  const key = queries.reduce((combinedKey, query) => {
-    combinedKey += query.key;
-    return combinedKey;
-  }, '');
-
   const { interval, intervalMs } = getIntervals(range, queryOptions.minInterval, queryOptions.maxDataPoints);
 
-  // Most datasource is using `panelId + query.refId` for cancellation logic.
-  // Using `format` here because it relates to the view panel that the request is for.
-  // However, some datasources don't use `panelId + query.refId`, but only `panelId`.
-  // Therefore panel id has to be unique.
-  const panelId = `${key}`;
+  const panelId = Number.parseInt(exploreId, 36);
 
   const request: DataQueryRequest = {
     app: CoreApp.Explore,
@@ -121,9 +114,7 @@ export function buildQueryTransaction(
     startTime: Date.now(),
     interval,
     intervalMs,
-    // TODO: the query request expects number and we are using string here. Seems like it works so far but can create
-    // issues down the road.
-    panelId: panelId as any,
+    panelId,
     targets: queries, // Datasources rely on DataQueries being passed under the targets key.
     range,
     requestId: 'explore_' + exploreId,
