@@ -34,7 +34,7 @@ export const DEFAULT_UI_STATE = {
   dedupStrategy: LogsDedupStrategy.none,
 };
 
-const nanoid = customAlphabet('01234567890abcdefghijklmnopqrstuwxyz', 3);
+const nanoid = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 3);
 
 const MAX_HISTORY_ITEMS = 100;
 
