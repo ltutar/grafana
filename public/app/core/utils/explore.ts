@@ -34,7 +34,8 @@ export const DEFAULT_UI_STATE = {
   dedupStrategy: LogsDedupStrategy.none,
 };
 
-const nanoid = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 3);
+export const ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
+const nanoid = customAlphabet(ID_ALPHABET, 3);
 
 const MAX_HISTORY_ITEMS = 100;
 
@@ -54,7 +55,13 @@ export interface GetExploreUrlArguments {
 }
 
 export function generateExploreId() {
-  return nanoid(3);
+  while (true) {
+    const id = nanoid(3);
+
+    if (!/^\d+$/.test(id)) {
+      return id;
+    }
+  }
 }
 
 /**
