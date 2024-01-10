@@ -600,39 +600,46 @@ func (r *xormRepositoryImpl) CleanAnnotations(ctx context.Context, cfg setting.A
 }
 
 func (r *xormRepositoryImpl) CleanOrphanedAnnotationTags(ctx context.Context) (int64, error) {
-	deleteQuery := `DELETE FROM annotation_tag WHERE id IN ( SELECT id FROM (SELECT id FROM annotation_tag WHERE NOT EXISTS (SELECT 1 FROM annotation a WHERE annotation_id = a.id) %s) a)`
-	sql := fmt.Sprintf(deleteQuery, r.db.GetDialect().Limit(r.cfg.AnnotationCleanupJobBatchSize))
-	return r.executeUntilDoneOrCancelled(ctx, sql)
-}
-
-func (r *xormRepositoryImpl) executeUntilDoneOrCancelled(ctx context.Context, sqlArgs ...any) (int64, error) {
 	var totalAffected int64
-	for {
-		select {
-		case <-ctx.Done():
-			return totalAffected, ctx.Err()
-		default:
-			var affected int64
-			err := r.db.WithDbSession(ctx, func(session *db.Session) error {
+	err := r.db.WithDbSession(ctx, func(session *db.Session) error {
+	loop:
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				selectQuery := `SELECT id FROM annotation_tag WHERE NOT EXISTS (SELECT 1 FROM annotation a WHERE annotation_id = a.id) ORDER BY id DESC %s`
+				sql := fmt.Sprintf(selectQuery, r.db.GetDialect().Limit(r.cfg.AnnotationCleanupJobBatchSize))
+				var ids []int64
+				if err := session.SQL(sql).Find(&ids); err != nil {
+					return err
+				}
+
+				if len(ids) == 0 {
+					break loop
+				}
+
+				deleteQuery := "DELETE FROM annotation_tag WHERE id IN (?" + strings.Repeat(", ?", len(ids)-1) + ")"
+				sqlArgs := make([]any, 0, len(ids)+1)
+				sqlArgs = append(sqlArgs, deleteQuery)
+				for _, id := range ids {
+					sqlArgs = append(sqlArgs, id)
+				}
 				res, err := session.Exec(sqlArgs...)
 				if err != nil {
 					return err
 				}
 
-				affected, err = res.RowsAffected()
+				affected, err := res.RowsAffected()
+				if err != nil {
+					return err
+				}
 				totalAffected += affected
-
-				return err
-			})
-			if err != nil {
-				return totalAffected, err
-			}
-
-			if affected == 0 {
-				return totalAffected, nil
 			}
 		}
-	}
+		return nil
+	})
+	return totalAffected, err
 }
 
 type annotationTag struct {
