@@ -517,27 +517,86 @@ func (r *xormRepositoryImpl) validateTagsLength(item *annotations.Item) error {
 
 func (r *xormRepositoryImpl) CleanAnnotations(ctx context.Context, cfg setting.AnnotationCleanupSettings, annotationType string) (int64, error) {
 	var totalAffected int64
-	if cfg.MaxAge > 0 {
-		cutoffDate := timeNow().Add(-cfg.MaxAge).UnixNano() / int64(time.Millisecond)
-		deleteQuery := `DELETE FROM annotation WHERE id IN (SELECT id FROM (SELECT id FROM annotation WHERE %s AND created < %v ORDER BY id DESC %s) a)`
-		sql := fmt.Sprintf(deleteQuery, annotationType, cutoffDate, r.db.GetDialect().Limit(r.cfg.AnnotationCleanupJobBatchSize))
+	err := r.db.WithDbSession(ctx, func(session *db.Session) error {
+		if cfg.MaxAge > 0 {
+		loop1:
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+					cutoffDate := timeNow().Add(-cfg.MaxAge).UnixNano() / int64(time.Millisecond)
+					selectQuery := `SELECT id FROM annotation WHERE %s AND created < %v ORDER BY id DESC %s`
+					sql := fmt.Sprintf(selectQuery, annotationType, cutoffDate, r.db.GetDialect().Limit(r.cfg.AnnotationCleanupJobBatchSize))
+					var ids []int64
+					if err := session.SQL(sql).Find(&ids); err != nil {
+						return err
+					}
 
-		affected, err := r.executeUntilDoneOrCancelled(ctx, sql)
-		totalAffected += affected
-		if err != nil {
-			return totalAffected, err
+					if len(ids) == 0 {
+						break loop1
+					}
+
+					deleteQuery := "DELETE FROM annotation WHERE id IN (?" + strings.Repeat(", ?", len(ids)-1) + ")"
+					sqlArgs := make([]any, 0, len(ids)+1)
+					sqlArgs = append(sqlArgs, deleteQuery)
+					for _, id := range ids {
+						sqlArgs = append(sqlArgs, id)
+					}
+					res, err := session.Exec(sqlArgs...)
+					if err != nil {
+						return err
+					}
+
+					affected, err := res.RowsAffected()
+					if err != nil {
+						return err
+					}
+					totalAffected += affected
+				}
+			}
 		}
-	}
 
-	if cfg.MaxCount > 0 {
-		deleteQuery := `DELETE FROM annotation WHERE id IN (SELECT id FROM (SELECT id FROM annotation WHERE %s ORDER BY id DESC %s) a)`
-		sql := fmt.Sprintf(deleteQuery, annotationType, r.db.GetDialect().LimitOffset(r.cfg.AnnotationCleanupJobBatchSize, cfg.MaxCount))
-		affected, err := r.executeUntilDoneOrCancelled(ctx, sql)
-		totalAffected += affected
-		return totalAffected, err
-	}
+		if cfg.MaxCount > 0 {
+		loop2:
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+					selectQuery := `SELECT id FROM annotation WHERE %s ORDER BY id DESC %s`
+					sql := fmt.Sprintf(selectQuery, annotationType, r.db.GetDialect().LimitOffset(r.cfg.AnnotationCleanupJobBatchSize, cfg.MaxCount))
+					var ids []int64
+					if err := session.SQL(sql).Find(&ids); err != nil {
+						return err
+					}
 
-	return totalAffected, nil
+					if len(ids) == 0 {
+						break loop2
+					}
+
+					deleteQuery := "DELETE FROM annotation WHERE id IN (?" + strings.Repeat(", ?", len(ids)-1) + ")"
+					sqlArgs := make([]any, 0, len(ids)+1)
+					sqlArgs = append(sqlArgs, deleteQuery)
+					for _, id := range ids {
+						sqlArgs = append(sqlArgs, id)
+					}
+					res, err := session.Exec(sqlArgs...)
+					if err != nil {
+						return err
+					}
+
+					affected, err := res.RowsAffected()
+					if err != nil {
+						return err
+					}
+					totalAffected += affected
+				}
+			}
+		}
+		return nil
+	})
+	return totalAffected, err
 }
 
 func (r *xormRepositoryImpl) CleanOrphanedAnnotationTags(ctx context.Context) (int64, error) {
@@ -546,7 +605,7 @@ func (r *xormRepositoryImpl) CleanOrphanedAnnotationTags(ctx context.Context) (i
 	return r.executeUntilDoneOrCancelled(ctx, sql)
 }
 
-func (r *xormRepositoryImpl) executeUntilDoneOrCancelled(ctx context.Context, sql string) (int64, error) {
+func (r *xormRepositoryImpl) executeUntilDoneOrCancelled(ctx context.Context, sqlArgs ...any) (int64, error) {
 	var totalAffected int64
 	for {
 		select {
@@ -555,7 +614,7 @@ func (r *xormRepositoryImpl) executeUntilDoneOrCancelled(ctx context.Context, sq
 		default:
 			var affected int64
 			err := r.db.WithDbSession(ctx, func(session *db.Session) error {
-				res, err := session.Exec(sql)
+				res, err := session.Exec(sqlArgs...)
 				if err != nil {
 					return err
 				}
