@@ -14,7 +14,7 @@ import (
 	"github.com/grafana/grafana/pkg/setting"
 )
 
-func TestAnnotationCleanUp(t *testing.T) {
+func TestIntegrationAnnotationCleanUp(t *testing.T) {
 	fakeSQL := db.InitTestDB(t)
 
 	t.Cleanup(func() {
@@ -111,7 +111,7 @@ func TestAnnotationCleanUp(t *testing.T) {
 	}
 }
 
-func TestOldAnnotationsAreDeletedFirst(t *testing.T) {
+func TestIntegrationOldAnnotationsAreDeletedFirst(t *testing.T) {
 	fakeSQL := db.InitTestDB(t)
 
 	t.Cleanup(func() {
